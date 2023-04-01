@@ -1,0 +1,1534 @@
+#include "StdAfx.h"
+#include "StringUtils.h"
+#include <stdlib.h>
+#include <sstream>
+
+using namespace std;
+
+#define min(a,b)    (((a) < (b)) ? (a) : (b))
+
+char * newstr(const char *orig) {
+	size_t len = strlen(orig);
+	char *s = new char[len+1];
+	strcpy_safe(s, orig, len+1);
+	return s;
+}
+
+//Like strncpy, but always null-terminates.
+void strcpy_safe(char *dest, const char *src, size_t limit) {
+	if (!dest) return;
+	if (!src) {
+		*dest = 0;
+		return;
+	}
+	while (*src && limit > 1) {
+		*dest++ = *src++;
+		--limit;
+	}
+	*dest = 0;
+}
+
+void strcat_safe(char *dest, const char *src, size_t limit) {
+	if (!dest) return;
+	if (!src) return;
+
+	size_t destLen = strlen(dest);
+	if(destLen >= limit) return;
+
+	strcpy_safe(dest+destLen, src, limit-destLen);
+}
+
+//Like _snprintf, but always null-terminates.
+size_t sprintf_safe(char *dest, size_t limit, const char *format, ...) {
+	va_list args;
+	va_start(args, format);
+	int len = vfsprintf_safe(dest, limit, format, args);
+	va_end(args);
+	return len;
+}
+
+//vararg version of sappendf.
+//supports %d, %s, %f, %%
+//TODO others (%0.2f? %x?)
+void vsappendf(string &str, const char *format, va_list args) {
+	for (const char *ch = format; *ch; ) 
+	{
+		if ('%' == *ch) 
+		{
+			if ('l' == ch[1] && ('d' == ch[2] || 'f' == ch[2]))
+				++ch; //treat %ld and %lf exactly like %d and %f
+			switch(ch[1])
+			{
+				case 'c':	{
+								unsigned int charint = va_arg(args,int);
+								str.push_back((char)charint);
+								break;
+							}
+				case 's':	{
+								const char *result = va_arg(args, const char *);
+								str.append(result);
+								break;
+							}
+				case 'd':	{
+								char buffer[24];
+								itoa(va_arg(args, int), buffer, 10);
+								str.append(buffer);
+								break;
+							}
+				case 'f':	{
+								char buffer[24];
+								gcvt(va_arg(args, double), 16, buffer); 
+								str.append(buffer);
+								break;
+							}
+				case '%':
+								str.push_back('%');
+								break;
+				case '\0': //stray '%' at end of string
+								str.push_back(ch[0]);
+								return;
+				default: //stray '%'
+								str.push_back(ch[0]);
+								str.push_back(ch[1]);
+								break;
+			}
+			ch += 2;
+		}
+		else {
+			const char *end = ch;
+			while (*end && *end != '%') ++end;
+			str.append(ch, end - ch);
+			ch = end;
+		}
+	}	
+}
+
+//sprintf_safe using string clears first.
+void sprintf_safe(string &str,const char *format,...) {
+	va_list args;
+	va_start(args,format);
+	str.clear();
+	vsappendf(str, format, args);
+	va_end(args);
+}
+
+//Like sprintf, but appends the args to the string
+void sappendf(string &str,const char *format,...) {
+	va_list args;
+	va_start(args,format);
+	vsappendf(str, format, args);
+	va_end(args);
+}
+
+//Like sprintf, but return the string.
+string format(const char *format,...) {
+	string s;
+	va_list args;
+	va_start(args, format);
+	vsappendf(s, format, args);
+	va_end(args);
+	return s;
+}
+
+size_t vfsprintf_safe(char *dest, size_t limit, const char *format, va_list args) {
+	if (!limit) return 0;
+	size_t len = _vsnprintf(dest, limit - 1, format, args);
+	if (len < 0 || len > limit - 1) //overflowed; behaves differently linux and windows
+		len = limit - 1;
+	dest[len] = 0;
+	return len;
+}
+
+const char * strskip(const char * str, const char * skip, bool caseSensitiveCheck) {
+	// If str begins with skip, return the character after; otherwise return 0.
+	if ( ! str ) return 0;
+	while ( *skip ) {
+		if ( *skip != *str ) 
+		{
+			if (!caseSensitiveCheck)
+			{ // convert both to lower-case & compare
+				char ch1 = *skip;
+				if (ch1 >= 'A' && ch1 <= 'Z')
+					ch1 += 32;
+				
+				char ch2 = *str;
+				if (ch2 >= 'A' && ch2 <= 'Z')
+					ch2 += 32;
+				
+				if (ch1 != ch2)
+					return 0;
+			}
+			else 
+				return 0;
+		}
+		++str; ++skip;
+	}
+	return str;
+} // end of strskip
+
+
+/**
+	@Description: Copy characters (at most max) to dest until
+		we find delimiter or end of line.
+	@return IF 'delimiter' is provided THEN
+				return pointer to char after delimiter if delimiter is found
+				NULL otherwise.
+			ELSE return pointer to end-of-record.
+	NOTE: The invoker must be prepared to handle NULL returned from this function.
+*/
+const char * ParseUntil(const char * str, char delimiter, char * dest, size_t max, bool bTrimLeadingSpaces) {
+	if ( !str ) return 0;
+		char *ptrDest = dest;
+	while ( delimiter != *str && '\0' != *str && '\n' != *str ) {
+		if ( ptrDest && max > 0 ) {
+				*ptrDest++ = *str++;
+			-- max;
+		} else ++str;
+	}
+	
+	if (bTrimLeadingSpaces && (dest < ptrDest) && (*(ptrDest-1) == ' ')) //Trim leading spaces if any
+	{
+		while(*(ptrDest-1) == ' ')
+		{
+			--ptrDest;
+			if (ptrDest == dest)
+				break;
+		}
+	}
+
+	if (ptrDest) *ptrDest = '\0';
+	if (delimiter) {
+		// invoker is interested in the delimiter. So, not finding delimiter is ERROR.
+		return (delimiter == *str) ? str + 1 : 0;
+	}
+	return str;
+}
+const char * ParseUntil(const char * str, char delimiter, string &dest)
+{
+	if ( !str ) return 0;
+
+	dest.clear();
+
+	while ( delimiter != *str && '\0' != *str && '\n' != *str ) 
+			dest.push_back(*str++);		
+
+	if (delimiter) {
+		// invoker is interested in the delimiter. So, not finding delimiter is ERROR.
+		return (delimiter == *str) ? str + 1 : 0;
+	}
+	return str;
+}
+
+
+//Parse a CSV field. Return what's after it, or null on failure.
+const char * ParseCSV(const char * str, char * dest, size_t max) {
+	if (!str) return 0;
+	if ('\"' == *str) {
+		str = ParseUntil(str + 1, '\"', dest, max);
+		if (!str || ',' != *str) return 0;
+		++ str;
+	} else {
+		str = ParseUntil(str, ',', dest, max);
+		if (!str) return 0;
+	}
+	return str;
+}
+
+const char * ParseOLFField(const char * str, char * dest, size_t max) {
+	if (!str)
+		return 0;
+	if ('[' == *str)
+		return ParseUntilString(str + 1, "]\t", dest, max);
+	else
+		return ParseUntilEither(str, '\t', '\n', dest, max);
+}
+const char * ParseOLFField(const char * str, string &dest) {
+	if (!str)
+		return 0;
+	if ('[' == *str)
+		return ParseUntilString(str + 1, "]\t", dest);
+	else
+		return ParseUntilEither(str, '\t', '\n', dest);
+}
+
+//Like ParseUntil, but '\' escapes the following character.
+const char * ParseUntilWithEscape(const char * str, char delimiter, string & result) {
+	result.clear();
+	if (!str) 
+		return 0;
+	while (*str && *str != delimiter) {
+		if ('\\' == *str)
+			++str;
+		if (*str)
+			result.push_back(*str);
+		++str;
+	}
+	if (delimiter)
+		return (delimiter == *str) ? str + 1 : 0;
+	return str;
+}
+
+/*fast splitting using | as separator and
+replace $ with /
+*/
+//used in Monitoring
+void splitv(const char * dest, ...)
+{
+	va_list varlist;
+	va_start(varlist,dest);
+
+	int i = 0;
+	const char * str = 0;
+	char * st = 0;
+	
+	str = dest;
+	i=0;
+	
+	st = va_arg(varlist,char*);
+	while (*str && st) {
+		if (*str == '|' && *(str+1) == '|' && *(str+2) == '|') {
+			st[i] = '\0';
+			st=va_arg(varlist,char*);
+			i = 0;
+			str+=3;
+		} else if (*str == '$') {
+			st[i++] = '/';
+			str++;
+		} else {
+			st[i++] = *str++;
+		}
+	}
+}
+
+
+/*fast replace function- walks the string only once*/
+void strreplace(const char * src, char * dest, int dstLen, const char * token, const char * reptoken)
+{
+	if (!dest || !src)
+		return;
+	int i = 0;
+	int pos = -1;
+	const char * tk = 0;
+	const char * str = src;
+	while(*str) {
+
+		tk = token;
+		if (*str == *tk) {
+			if(i >= dstLen) {
+				break;
+			}
+			pos = i;
+			dest[i++] = *str++;
+			tk++;
+			while((*str && *tk) && (*str == *tk) && (i < dstLen)) {
+				dest[i++] = *str++;
+				tk++;
+			}
+			if (!*tk) {
+				tk = reptoken;
+				i = pos;
+				while(*tk && (i < dstLen)) {
+					dest[i++] = *tk++;
+				}
+
+			}
+		} else {
+			if(i >= dstLen) {
+				break;
+			}
+			else {
+				dest[i++] = *str++;
+			}
+		}
+	}
+
+	dest[i] = '\0';
+}
+
+//Replace all occurrences of FROM with TO.
+//This version modifies STR in place, so TO must not be longer than FROM.
+void ReplaceString(char *str, const char *from, const char *to) {
+	if (strlen(from) < strlen(to))
+		return;
+	ReplaceString(str, str, INT_MAX, from, to);
+}
+
+//Replace all occurrences of FROM with TO.
+//The result is written to DEST, and will be truncated to SIZE characters.
+//TO may be longer than FROM.
+void ReplaceString(const char *src, char *dest, size_t size, const char *from, const char *to) {
+	const char *cursrc = src;
+	char *curdst = dest;
+	size_t remaining = size - 1, fromsize = strlen(from), tosize = strlen(to);
+	while (remaining && *cursrc) {
+		if (*cursrc == *from && strskip(cursrc, from)) {
+			size_t chars = min(tosize, remaining);
+			strncpy(curdst, to, chars);
+			remaining -= chars;
+			cursrc += fromsize;
+			curdst += chars;
+		} else {
+			*curdst++ = *cursrc++;
+			--remaining;
+		}
+	}
+	*curdst = 0;
+}
+
+
+void right(const char * src, char tk, char * dest, int dstLen)
+{
+	if (!dest)
+		return;
+	const char * str = src;
+	int i =0;
+	const char * pos = 0;
+
+	/*find the right most occurence of the separator*/
+	while(*str) {
+		if (*str == tk) {
+			pos = str;
+		}
+		str++;
+	}
+
+	if (!pos) {
+		goto exit;
+	}
+
+	str = pos+1;
+	while(*str) {
+		dest[i++] = *str++;
+        if (i == dstLen) // reached end of dest buffer
+            break;
+	}
+
+exit:
+	dest[i] = '\0';
+}
+
+
+void left(const char * src, char tk, char * dest, int dstLen)
+{
+	if (!dest)
+		return;
+	if (dest == src) {
+		char * dPtr = (char *)strchr(src, tk);
+		if (dPtr)
+			*dPtr = 0;
+		return;
+	}
+	
+	const char * str = src;
+	int i =0;
+
+	while(*str && (*str != tk) ) {
+		dest[i++] = *str++;
+        if (i == dstLen) // reached end of dest buffer
+            break;
+	}
+
+	dest[i] = '\0';
+}
+
+// Scan a string for the last occurrence of a another string either case sensitively or insensitively.
+char *strrstr(const char *src, const char *token, bool bCaseSensitive)
+{
+	if(!src || !token)
+		return NULL;
+	
+	size_t slen = strlen(src);
+	size_t tlen = strlen(token);
+	
+	if (slen >= tlen) {
+		size_t j, i = slen - tlen;
+		
+		do {
+			for (j = 0; j < tlen; j++) 
+			{ 
+				if (src[i + j] != token[j]) { 
+					if(bCaseSensitive || (toupper(src[i + j]) != toupper(token[j]))) { 
+						break; 
+					} 
+				} 
+			}
+
+			if (j == tlen)
+				return (char *)(src + i);
+
+		} while (i-- != 0);
+	}
+	
+	return NULL;
+}
+
+/*splits string into two parts based on first separator scanned*/
+void split2 (char * src, char tk, char *token)
+{
+	const char * str = src;
+	int i =0;
+
+	while(*str && (*str != tk) ) {
+		i++;
+		str++;
+	}
+
+	str++;
+	src[i] = '\0';
+
+	i=0;
+	while(*str) {
+		token[i++] = *str++;
+	}
+
+	token[i] = '\0';
+}
+
+void strtrimright(char * src, char trim) {
+	char * end = src;
+	while (*end) ++end;
+	--end;
+	while (end >= src && *end == trim)
+		*end-- = 0;
+}
+
+void trimrightuptocharacter(char * src, char trim) {
+	bool match = false;
+	char * end = src;
+	while (*end) ++end;
+	--end;
+	while (end >= src) {
+		if(*end == trim)
+			match = true;
+		*end-- = 0;
+		if(match)
+			break;
+	}
+}
+
+//Like strtrimright, but remove any of the characters in trim.
+void strmtrimright(char * src, const char *trim) {
+	char * end = src;
+	while (*end) ++end;
+	--end;
+
+    int trimlen = strlen(trim);
+    bool match = true;
+    while (end >= src && match) {
+        match = false;
+        for (int i=0; i < trimlen; i++) {
+            if (*end == trim[i]) {
+                *end-- = 0;
+                match = true;
+                break;
+            }
+        }
+    }
+}
+
+//Remove a specific suffix.
+//trims the string multiple times if bonce is false else trims once
+void strmtrimright2(char * src, const char *trim, bool bOnce)
+{
+	if (!src || !trim || !trim[0])
+		return;
+	char * end = src;
+	while (*end) ++end;
+	int trimlen = strlen(trim);
+	end -= trimlen;
+	while (end >= src && !strcmp(end, trim))
+	{
+		*end = 0;
+		if(bOnce)
+			break;
+		end -= trimlen;
+	}
+}
+void strmtrimright2(string &src, const char *trim, bool bOnce)
+{
+	if (!trim || !trim[0])
+		return;
+	int e = src.length();
+	int trimlen = strlen(trim);
+	char * end = (char *)src.c_str();
+	while (*end) ++end;
+	end -=trimlen;
+	e -= trimlen;
+	while (e >= 0)
+	{
+		if(!strcmp(end, trim))
+			src[e]=0;
+		if(bOnce)
+			break;
+		e -= trimlen;
+		end -=trimlen;
+	}
+}
+
+
+void strtrimright(string &s, char trim) {
+	size_t trimto = s.length();
+	while (trimto > 0 && s[trimto - 1] == trim)
+		--trimto;
+	if (trimto < s.length())
+		s.resize(trimto);
+}
+
+void strtrimleft(char * src, char trim) {
+	char * cur = src;
+	while (*cur == trim) ++ cur;
+	if (cur > src)
+	{
+		while (*cur) *src++ = *cur++;
+		*src = '\0';
+	}
+}
+
+void strmtrimleft(char * src, const char *trim) {
+	char * cur = src;
+
+    int trimlen = strlen(trim);
+    bool match = true;
+    while (match) {
+        match = false;
+        for (int i=0; i < trimlen; i++) {
+            if (*cur == trim[i]) {
+                ++cur;
+                match = true;
+                break;
+            }
+        }
+    }
+
+	if (cur > src)
+	{
+		while (*cur) *src++ = *cur++;
+		*src = '\0';
+	}
+}
+
+
+void TrimRight(string &s, char *chs)
+{
+	char *str = new char[s.length() + 5];
+	strcpy(str, s.c_str());
+	int i=0, j=0;
+	int slen, chlen;
+	slen = strlen(str);
+	chlen= strlen(chs);
+	
+	for(i=slen;j!=-1 && i >= 0; i--) {
+		for(j=chlen; j >= 0; j--) {
+			if(str[i] == chs[j]) {
+				str[i] = '\0';
+				break;
+			}
+		}
+	}
+	s = str;
+	delete [] str;
+}
+
+void TrimLeft(string &s, char *chs)
+{
+	char *str = new char[s.length() + 5];
+	char *temp = str;
+	strcpy(str, s.c_str());
+	int i=0, j=0;
+	int slen, chlen;
+	slen = strlen(str);
+	chlen= strlen(chs);
+	
+	for(i=0; j < chlen && i < slen; i++)
+	{
+		for(j=0; j < chlen; j++)
+		{
+			if(str[i] == chs[j])
+			{
+				temp = &str[i+1];
+				break;
+			}
+		}
+	}
+	s = temp;
+	delete [] str;
+}
+
+
+int strcountchr(const char * str, char c) {
+	if (!str) return 0;
+	int n = 0;
+	while (*str) {
+		if (c == *str) ++n;
+		++str;
+	}
+	return n;
+}
+
+const char* ParseSimPrefix(const char * mesg, char * simip, int simiplen, long * simdate)
+{
+	if (!mesg)
+		return 0;
+
+	const char *more = ParseUntilString(mesg, "simip=", 0, 0);
+	if (more && simip) {
+		more = ParseUntil(more, '\t', simip, simiplen - 1);
+	} else {
+		return 0;
+	}
+
+	const char * tmp = more;
+	more = ParseUntilString(more, "simdate=", 0, 0);
+	if (more && simdate) {
+		char sdate[64];
+		more = ParseUntil(more, '\t', sdate, 63);
+		*simdate = atol(sdate);
+	} else {
+		more = tmp;
+	}
+
+	return more;
+}
+
+const char * ParseInteger(const char * str, char * dest, size_t max, int * idest) {
+// copy digits from str to dest, storing the numeric value in *idest. Return where we stopped.
+	if ( ! str ) return 0;
+	if ( idest ) *idest = 0;
+	while ( '0' <= *str && '9' >= *str ) {
+		if ( idest ) *idest = 10 * *idest + *str - '0';
+		if ( dest && max > 0 ) {
+			*dest++ = *str++;
+			-- max;
+		} else ++ str;
+	}
+	if ( dest ) *dest = '\0';
+	return str;
+}
+
+const char * ParseInteger64(const char * str, char * dest, size_t max, DWORD64 * idest) {
+// copy digits from str to dest, storing the numeric value in *idest. Return where we stopped.
+	if ( ! str ) return 0;
+	if ( idest ) *idest = 0;
+	while ( '0' <= *str && '9' >= *str ) {
+		if ( idest ) *idest = 10 * *idest + *str - '0';
+		if ( dest && max > 0 ) {
+			*dest++ = *str++;
+			-- max;
+		} else ++ str;
+	}
+	if ( dest ) *dest = '\0';
+	return str;
+}
+
+const char * ParseToken(const char * str, char * dest, size_t max) {
+// Copy one whitespace-separated token (or as much of it as will fit) to dest.
+// Return where we left off. Never returns null (unless it was passed null).
+	if ( !str ) return 0;
+	while ( ' ' == *str || '\t' == *str || '\r' == *str ) ++str;
+	while ( ' ' != *str && '\t' != *str && '\r' != *str ) {
+		if ( '\0' == *str || '\n' == *str || '\r' == *str ) break;
+		if ( dest && max > 0 ) {
+			*dest++ = *str++;
+			-- max;
+		} else ++ str;
+	}
+	if ( dest ) *dest = '\0';
+	return str;
+}
+
+const char * ParseToken(const char * str, string &dest)
+{
+	// Copy one whitespace-separated token (or as much of it as will fit) to dest.
+	// Return where we left off. Never returns null (unless it was passed null).
+	if ( !str ) return 0;
+	while ( ' ' == *str || '\t' == *str ) ++str;
+	while ( ' ' != *str && '\t' != *str ) {
+		if ( '\0' == *str || '\n' == *str ) break;
+		dest.push_back(*str++);
+	}
+	return str;
+}
+
+// Same as parseUntil except skips through strings delimited by startchars and endchars.
+// Essentially if we encounter any char in startchars, we skip through until corresponding
+// endchar.
+// Example startChars = "\"\["  with endChars = "\"\]", we will skip through
+// double quoted strings as well as anything between '[' and ']'.
+// argument "n" - is number of chars in startChars or endChars array
+const char * ParseUntilSkipString(const char * str, char delimiter, 
+								  const char * startChars, const char * endChars, int n,
+								  char * dest, size_t max) {
+	char match_char;
+	if ( !str ) return 0;
+	bool skipThrough = false;
+	while ( delimiter != *str && '\0' != *str && '\n' != *str ) {
+		if ( dest && max > 0 ) {
+			*dest++ = *str;
+			-- max;
+		} 
+		// See if we are at the beginning of a string.
+		for (int i = 0; i < n; i++) {
+			if (*str == startChars[i]) {
+				// mark 'match_char' as the char that ends our string
+				skipThrough = true;
+				match_char = endChars[i];
+				break;
+			}
+		}
+		str++;
+		while (skipThrough && (*str != '\0') && (*str != '\n')) {
+			// skip through the string
+			if (dest && max > 0) {
+				*dest++ = *str;
+				--max;
+			}
+			if (*str == match_char)
+				skipThrough = false;
+			str++;
+		}
+
+	}
+	if (dest) *dest = '\0';
+	if (delimiter) {
+		// invoker is interested in the delimiter. So, not finding delimiter is ERROR.
+		return (delimiter == *str) ? str + 1 : 0;
+	}
+	return str;
+}
+
+const char * ParseUntilEitherString(const char * str,const char * delimiter1,const char * delimiter2,
+									char * dest,size_t max)
+{
+	if (!str) return 0;
+	while (!(delimiter1[0] == *str && strskip(str, delimiter1)) &&
+		   !(delimiter2[0] == *str && strskip(str, delimiter2)) &&
+		   '\0' != *str && '\n' != *str ) {
+		if (dest && max > 0 ) {
+			*dest++ = *str++;
+			-- max;
+		} else ++str;
+	}
+	if (dest) *dest = '\0';
+	const char *szret = (delimiter1[0] == *str)?strskip(str,delimiter1):0;
+	if (!szret) szret = (delimiter2[0] == *str)?strskip(str,delimiter2):0;
+	return szret;
+}
+const char * ParseUntilEitherString(const char * str,const char * delimiter1,const char * delimiter2,
+									string &dest)
+{
+	if (!str) return 0;
+	while (!(delimiter1[0] == *str && strskip(str, delimiter1)) &&
+		!(delimiter2[0] == *str && strskip(str, delimiter2)) &&
+		'\0' != *str && '\n' != *str ) {
+			dest.push_back(*str++);
+	}
+	const char *szret = (delimiter1[0] == *str)?strskip(str,delimiter1):0;
+	if (!szret) szret = (delimiter2[0] == *str)?strskip(str,delimiter2):0;
+	return szret;
+}
+
+//ParseUntilString with three strings.
+const char * ParseUntilAnyString(const char * str, const char *delimiter1, const char *delimiter2,
+								 const char *delimiter3, char * dest, size_t max)
+{
+	if (!str) return NULL;
+	while (!(delimiter1[0] == *str && strskip(str, delimiter1)) &&
+		   !(delimiter2[0] == *str && strskip(str, delimiter2)) &&
+		   !(delimiter3[0] == *str && strskip(str, delimiter3)) &&
+		   '\0' != *str && '\n' != *str ) {
+		if (dest && max > 0 ) {
+			*dest++ = *str++;
+			-- max;
+		} else ++str;
+	}
+	if (dest) *dest = '\0';
+	const char *rest = delimiter1[0] == *str ? strskip(str, delimiter1) : 0;
+	if (!rest) rest = delimiter2[0] == *str ? strskip(str, delimiter2) : 0;
+	if (!rest) rest = delimiter3[0] == *str ? strskip(str, delimiter3) : 0;
+	return rest;
+}
+
+//Like ParseUntil, but stop at either delimiter.
+const char * ParseUntilEither(const char * str, char delimiter1, char delimiter2,
+							  char * dest, size_t max) {
+	if ( !str ) return 0;
+	while ( delimiter1 != *str && delimiter2 != *str
+				&& '\0' != *str && '\n' != *str ) {
+		if ( dest && max > 0 ) {
+			*dest++ = *str++;
+			-- max;
+		} else ++str;
+	}
+	if (dest) *dest = '\0';
+	return (delimiter1 == *str || delimiter2 == *str) ? str + 1 : 0;
+}
+//Like ParseUntil, but stop at either delimiter.
+const char * ParseUntilEither(const char * str, char delimiter1, char delimiter2,
+							  string &dest)
+{
+	if ( !str ) return 0;
+	while ( delimiter1 != *str && delimiter2 != *str
+		&& '\0' != *str && '\n' != *str ) {
+				dest.push_back(*str++);
+	}
+	return (delimiter1 == *str || delimiter2 == *str) ? str + 1 : 0;
+}
+
+//Like ParseUntilEither with three delimiters
+const char * ParseUntilAny(const char * str, char d1, char d2, char d3,
+						   char * dest, size_t max) {
+	if ( !str ) return 0;
+	while ( d1 != *str && d2 != *str && d3 != *str
+				&& '\0' != *str && '\n' != *str ) {
+		if ( dest && max > 0 ) {
+			*dest++ = *str++;
+			-- max;
+		} else ++str;
+	}
+	if (dest) *dest = '\0';
+	return (d1 == *str || d2 == *str || d3 == *str) ? str + 1 : 0;
+}
+
+
+//ParseUntil, with a multicharacter delimiter
+const char * ParseUntilString(const char * str, const char * delimiter,
+							  char * dest, size_t max, bool isCaseSensitive) {
+	if ( !str || !delimiter ) return 0;
+	while ( (delimiter[0] != *str || !strskip(str, delimiter, isCaseSensitive))
+			&& '\0' != *str && '\n' != *str ) {
+		if ( dest && max > 0 ) {
+			*dest++ = *str++;
+			-- max;
+		} else ++str;
+	}
+	if (dest) *dest = '\0';
+	return strskip(str, delimiter, isCaseSensitive);
+}
+//ParseUntil, with a multicharacter delimiter
+const char * ParseUntilString(const char * str, const char * delimiter,
+							  string &dest, bool isCaseSensitive) 
+{
+	if ( !str || !delimiter ) return 0;
+	dest.clear();
+	while ( (delimiter[0] != *str || !strskip(str, delimiter, isCaseSensitive))
+		&& '\0' != *str && '\n' != *str ) {
+			dest.push_back(*str++);
+	}	
+	return strskip(str, delimiter, isCaseSensitive);
+}
+
+//ParseUntil, with a multicharacter delimiter; dest will be right trimmed with spaces
+const char * ParseUntilStringRightTrimmed(const char * src, const char * delimiter,
+	  char * dest, size_t max, bool isCaseSensitive) 
+{	
+	if ( !src || !delimiter ) return 0;
+	char *destPtr = dest;
+	while ( ((delimiter[0] != *src) || (!strskip(src, delimiter, isCaseSensitive)))
+		  && ('\0' != *src) && ('\n' != *src )) {
+		  if ( destPtr && (max > 0) ) {
+			  *destPtr++ = *src++;
+			-- max;
+			} else ++src;
+	}
+
+	if (destPtr)
+	{
+		*destPtr = '\0'; // now we are at the character *after* the end of dest		
+		--destPtr; // move to end character of dest
+		while ((destPtr >= dest) && (*destPtr == ' ')) //check if dest is ends with spaces then trim
+			*destPtr-- = 0;
+	}
+
+	return strskip(src, delimiter, isCaseSensitive);
+}
+
+
+const char * ParseUntilExceptLastToken(const char * str, char delimiter, char * dest, size_t max,
+									   char * lastdest, size_t lastmax, const char ** terminators) {
+// Copy characters to dest until the last whitespace before the first delimiter, or the first token
+// in terminators. Copy the remaining characters to lastdest. Return where we finished.
+	char * lastws = 0;
+	char * last = lastdest;
+	size_t lastleft = lastmax;
+	bool gotws = false, gotchars = true;
+	while ( !('\0' == *str || '\n' == *str || delimiter == *str && gotws) ) {
+		if ( ' ' == *str || '\t' == *str ) {
+			if ( gotchars ) { // don't advance lastws until we have non-whitespace
+				if ( lastdest ) {
+					*last = '\0';
+					if ( terminators && gotws ) {
+						for ( const char ** term = terminators; *term && (*term)[0] <= lastdest[0]; ++term )
+							if ( (*term)[0] == lastdest[0] && !strcmp(*term, lastdest) ) {
+								if ( lastws ) *lastws = '\0';
+								else if ( dest ) *dest = '\0';
+								return ParseUntil(str, delimiter, last, lastleft);
+							}
+					}
+					last = lastdest;
+					lastleft = lastmax;
+				}
+				if ( max > 0 ) lastws = dest;
+				gotchars = false;
+			}
+			gotws = true;
+		} else {
+			gotchars = true;
+			if ( last && lastleft > 0 ) {
+				*last++ = *str;
+				-- lastleft;
+			}
+		}
+		if ( dest && max > 0 ) {
+			*dest++ = *str++;
+			-- max;
+		} else ++ str;
+	}
+	if ( lastws && (!gotchars || delimiter == *str)) *lastws = '\0';
+	if ( delimiter == *str ) ++ str;
+	if ( dest ) *dest = '\0';
+	if ( last ) *last = '\0';
+	return str;
+}
+
+void pathFormatter(char *path)
+{
+#ifndef WIN32
+	charReplace(path, '\\', '/');
+#endif
+}
+
+//Replace all occurrences of TOKEN with REPTOKEN, in place.
+void charReplace(char *strline, char token, char reptoken)
+{
+	if (!strline || !token)//NULL string...
+		return;
+
+	const char * ptr = strchr(strline, token);
+	if (!ptr)// No such Character present in the String...
+		return;
+
+	char *str = (char *) ptr;
+	char * dst = str;
+	while (*str != '\0') {
+		if (reptoken) {
+			if (*str == token)
+				*str = reptoken;
+		}
+		else {
+			if (*str != token)
+				*dst++ = *str;
+		}
+		str++;
+	}
+	if (!reptoken)
+		*dst = 0;
+}
+
+//Remove the extra chars specified in the 'extraToken'.
+//Ex. "This is    sample string"
+//out."This is sample string"
+//Here extra <space> is removed which is passed into extraToken.
+void RemoveExtraChars(char *strline, char extraToken)
+{
+	if (!strline || !extraToken)//NULL string...
+		return;
+
+	const char *ptr = strchr(strline, extraToken);
+	if (!ptr)// No such Character present in the String...
+		return;
+
+	char *str = (char *) ptr;
+	char *dst = str;
+	while (*str != '\0') {
+		if (*str==extraToken && (str+1) && *(str+1)==extraToken ) {
+
+		}
+		else {
+			*dst++ = *str;
+		}
+		++str;
+	}
+
+	*dst = '\0';
+}
+
+//Reduce all sequences of whitespace with single spaces, i.e. s/\s+/ /g
+string CollapseWhitespace(const char *in) {
+	string result;
+	for (const char * c = in; *c; )
+		if (isspace((unsigned char)*c)) {
+			result += ' ';
+			while (isspace((unsigned char)*c)) ++c;
+		} else
+			result += *c++;
+	return result;
+}
+
+bool replaceToken(char * src, int sLen, const char * token, const char * reptoken, char * dest, size_t dLen)
+{
+	if(!src)//NULL String...
+		return false;
+
+	size_t i = 0,pos = -1,srcLen = strlen(src);
+
+	if(srcLen < strlen(token)){//Here String length < Token Length .. no chance of Replacing...
+		if(dest){//Need to copy Whole String to Destination if it Exist...
+			strncpy(dest,src,dLen-1);
+			dest[dLen-1]=0;
+		}
+		return false;
+	}
+	
+	if(!reptoken){
+		return false;
+	}
+	char *destPtr=NULL;
+	if(!dest){//This indicates resultant need to be copied in same variable..
+		destPtr = new char[sLen+1];
+		memset(destPtr,0,sLen);
+		dLen = sLen;//Setting Source String length Itself..
+	}else
+		destPtr = dest;
+	
+	char *str = src;
+	bool bReplaced = false;
+	while(*str) {
+		const char *tk = token;
+		if(i >= dLen)//Exceeded Destination Buffer Length...
+			break;
+		
+		if (*str == *tk) {
+			pos = i;
+			destPtr[i++] = *str++;
+			tk++;
+			while((*str && *tk) && (*str == *tk) && (i < dLen)) {
+				destPtr[i++] = *str++;
+				tk++;
+			}
+			if (!*tk && reptoken) {//Token Matched with the value... so copying the replace Token..
+				tk = reptoken;
+				i = pos;
+				while(*tk && (i < dLen)) {
+					destPtr[i++] = *tk++;
+				}
+				bReplaced = true;
+			}
+		} else {
+			destPtr[i++] = *str++;
+		}
+	}
+	destPtr[i] = '\0';
+
+	//Need to delete allocated memory..
+	if(!dest){
+		strncpy(src,destPtr,i);
+		src[i]=0;
+		delete [] destPtr;
+		destPtr = NULL;
+	}
+	return bReplaced;
+}
+
+//Is this string a nonnegative integer (possibly followed by a newline)?
+bool isNumeric(const char* str)
+{
+	while (*str>='0' && *str<='9') str++;
+	while (*str=='\n' || *str=='\r') str++;
+	if (*str != 0) return false;
+	return true;
+}
+/*
+Float number can be anyone of these
+1."<mantissa>e+/-<exponent>" mantissa can have a decimal in it where as exponent cannot
+  ex:1.89357e+007
+2."<decimalpart>.<fractionpart> ex: 1.525689326
+Note that at least one digit is required, but a decimal point is not.
+*/
+bool isFloat(const char* str)
+{
+	if ('-' == *str) ++str;
+	int digits = 0, dots = 0;
+	while (*str>='0' && *str<='9' || '.' == *str) {
+		if ('.' == *str) ++dots;
+		else ++digits;
+		str++;
+	}
+	if (!digits || dots > 1)
+		return false;
+	if(*str == 'e')
+	{
+		str++;
+		if(*str == '+' || *str == '-')
+			str++;
+		while (*str>='0' && *str<='9') str++;
+	}
+	return (*str == 0);
+}
+
+//Convert a long valueid (nodetype:category:name) to a short one (category:name).
+//If it has less than two colons (e.g. status or already category:name) then just return it.
+const char *shortid(const char *valueid) {
+	const char *id = strchr(valueid, ':');
+	if (id && strchr(id + 1, ':'))
+		return id + 1;
+	else
+		return valueid;
+}
+
+
+// Converts an integer value to its hex character - used for UrlEncode
+char to_hex(char code) {
+  static char hex[] = "0123456789abcdef";
+  return hex[code & 15];
+}
+
+// Converts a hex character to its integer value - used for UrlDecode
+char from_hex(char ch) {
+  return isdigit(ch) ? ch - '0' : tolower(ch) - 'a' + 10;
+}
+
+// Returns a url-encoded version of str
+// IMPORTANT: be sure to free() the returned string after use
+char *UrlEncode(const char *str) {
+  const char *pstr = str;
+  char *buf = (char*) malloc(strlen(str) * 3 + 1);
+  if (buf != NULL) {
+	  char *pbuf = buf;
+	  while (*pstr) {
+		if ((/*ascii*/ *pstr>=0 && *pstr<=256) && isalnum(*pstr)) 
+		  *pbuf++ = *pstr;
+		else 
+		  *pbuf++ = '%', *pbuf++ = to_hex(*pstr >> 4), *pbuf++ = to_hex(*pstr & 15);
+		pstr++;
+	  }
+	  *pbuf = '\0';
+  }
+  return buf;
+}
+
+// Returns a url-decoded version of str
+// IMPORTANT: be sure to free() the returned string after use
+char *UrlDecode(const char *str) {
+  const char *pstr = str;
+  char *buf = (char*) malloc(strlen(str) + 1);
+  if (buf != NULL) {
+	  char *pbuf = buf;
+	  while (*pstr) {
+		if (*pstr == '%') {
+		  if (pstr[1] && pstr[2]) {
+			*pbuf++ = from_hex(pstr[1]) << 4 | from_hex(pstr[2]);
+			pstr += 2;
+		  }
+		} else {
+		  *pbuf++ = *pstr;
+		}
+		pstr++;
+	  }
+	  *pbuf = '\0';
+  }
+  return buf;
+}
+
+#if defined(WIN32) || defined(AIX) || defined(SOLARIS)
+//Given a pathname, return the filename.
+const char *basename(const char *path) {
+	const char *slash = NULL;
+	for (const char *p = path; *p; ++p)
+		if (*p == '/' || *p == '\\')
+			slash = p;
+	return slash ? slash + 1 : path;
+}
+#endif
+
+//Extract the dirname from a path, and return the basename.
+const char * SplitPathname(const char * path, char * dirname, size_t limit)
+{
+	const char *base = basename(path);
+	if (base == path)
+		strcpy(dirname, "");
+	else
+		strcpy_safe(dirname, path, min(base - path, limit));
+		//strcpy_safe leaves one character for null, so it omits the slash
+	return base;
+}
+
+//Append addition to str, in amortized linear time (unlike string::append).
+void append_string(string &str, const char *addition) {
+	append_string(str, addition, strlen(addition));
+}
+
+void append_string(string &str, const char *addition, size_t len) {
+	size_t needed = str.length() + len;
+	if (needed >= str.capacity())
+		str.reserve(needed * 2);
+	str.append(addition, len);
+}
+
+//used for convert capital to lower
+void strlwr(string &str)
+{
+	for (size_t i = 0; i < str.length(); ++i)
+		if (isupper(str[i]))
+			str[i] = tolower(str[i]);
+}
+#ifndef WIN32
+void strlwr(char *str)
+{
+	char *ptr = str;
+	while(*ptr != '\0')
+	{
+		if(*ptr >= 'A' && *ptr <='Z')
+			*ptr = (char)(*ptr + 32);
+		ptr++;
+	}
+}
+#endif
+//used for convert lower to capital
+void strupr(string &str)
+{
+	for (size_t i = 0; i < str.length(); ++i)
+		if (islower(str[i]))
+			str[i] = toupper(str[i]);
+}
+
+//used for replace the string if bonce is true then finds once else multiple
+bool replacestr(std::string &s, const char *sub,
+				const char *other, bool bonce)
+{
+	if(!sub || !other)
+		return false;
+	size_t subLen = strlen(sub);
+	size_t otherLen = strlen(other);
+	bool result = false;
+	size_t b = 0;
+	for (;;)
+	{
+		b = s.find(sub, b);
+		if (b == s.npos) break;
+		s.replace(b, subLen, other);
+		result = true;
+		if(bonce) break;
+		b += otherLen;
+	}
+	return result;
+}
+//puts '\0' before the token found position.
+bool stdtrim(string &s, const char *find)
+{
+	size_t end =0;
+	end = s.find(find, end);
+	if(end!= s.npos)
+	{
+		string temp;
+		temp.reserve(s.length());
+		for(size_t i=0; i<end; i++)
+		{
+			temp.push_back(s[i]);
+		}
+		s = temp;
+		return true;
+	}
+	return false;
+}
+
+// tokenize a string by delimiter and returns no. of tokens
+int tokenize (const std::string str, const std::string delimiter, vector<std::string> &vTokens ) {
+	std::string::size_type pos, lastpos = 0; 
+	int count = 0;
+
+	do {
+		pos = str.find (delimiter, lastpos);
+		vTokens.push_back (str.substr (lastpos, pos-lastpos));
+		++count;
+		lastpos = pos + delimiter.size();
+	}while (pos != std::string::npos);
+
+	return count;
+}
+
+#ifndef WIN32
+char* itoa(int val, char *buf, int radix)
+{
+	int digval = 0;
+
+	char* p = buf;
+
+	if (val < 0)
+	{
+		// Negative, so output '-' and negate
+		*p++ = '-';
+		val = (unsigned int)(-(int) val);
+	}
+
+	// Save pointer to first digit
+	char* firstdig = p;
+
+	do
+	{
+		digval = (unsigned) (val % radix);
+		val /= radix;
+
+		// Convert to ascii and store
+		if (digval > 9)
+			*p++ = (char) (digval - 10 + 'a');
+		else
+			*p++ = (char) (digval + '0');
+	} while (val > 0);
+
+	// We now have the digit of the number in the buffer, but in reverse
+	// order.  Thus we reverse them now.
+
+	*p-- = '\0';
+	char temp = 0;
+	do
+	{
+		temp = *p;
+		*p = *firstdig;
+		*firstdig = temp;
+		p--;
+		firstdig++;
+	} while (firstdig < p);
+
+	return buf;
+}
+
+//Discard root privileges: setuid to the user "svdc".
+//This is not about strings; it's here so projects using it don't
+// have to include another sourcefile.
+bool setUidOfUser(char* userName,char* groupName)
+{
+	char *file[]={"/etc/passwd","/etc/group"};
+	char names[2][128];
+	strcpy_safe(names[0],userName,128);
+	strcpy_safe(names[1],groupName,128);
+	int id[2]={-1,-1};
+	char buff[1024];
+	char name[128];
+	char idStr[8];
+	for(int i=0;i<2;i++)
+	{
+		
+		FILE *fp=fopen(file[i],"r");
+		if(fp)
+		{
+			while(!feof(fp))
+			{
+				memset(buff,0,1024);
+				fgets(buff,1023,fp);
+				if(buff[0]=='\0' || buff[0] == '#')
+					continue;
+				name[0]='\0';
+				const char * more = ParseUntil(buff, ':', name, 127);
+				if(strcmp(name,names[i]) || !more)
+					continue;
+				more = ParseUntil(more, ':', 0, 0);
+				if(!more)
+					continue;
+				memset(idStr,0,8);
+				more = ParseUntil(more, ':', idStr, 7);
+				id[i]=atoi(idStr);
+				break;
+			}
+			fclose(fp);
+			fp=NULL;
+		}
+		if(id[i] == -1)
+		{
+			//printf("Error! Fetching id of %s failed",names[i]);
+			return false;
+		}
+	}
+	setgid(id[1]);
+	setuid(id[0]);
+	return true;
+}
+bool ReadConfig(char *appPath,char *name,char *value)
+{
+	FILE *fd=NULL;
+	char buff[1024];
+	char valuebuff[128],namebuff[128];
+	bool result=false;
+	char configPath[1024];
+	sprintf_safe(configPath,1024,"%s/config.txt",appPath);
+	fd = fopen(configPath, "r");
+	if(!fd)	
+	{
+		printf("Failed to read config.txt,Error:%s",strerror(errno));
+		return result;
+	}
+	while(!feof(fd))
+	{
+		memset(buff,0,1024);
+		memset(namebuff,0,128);
+		memset(valuebuff,0,128);
+		fgets(buff,1023,fd);
+		// spacing and ignore comment lines
+		if (buff[0] == 0 || buff[0] == '\n' || buff[0] == '#')
+			continue;
+		
+		const char * more = ParseUntil(buff, '=', namebuff, 127);
+		if (!more) 
+			continue;
+		
+		if (stricmp(name,namebuff))
+			continue; // not the one we want
+		more = ParseUntil(more, '\n', valuebuff, 127);
+		if (!valuebuff[0])
+		{
+			printf("Config Value for %s not available %s", namebuff);
+			break;
+		}
+		strncpy(value,valuebuff,127);
+		result = true;
+		break; // found name
+	}
+	fclose(fd);
+	return result;
+}
+#endif
+
+#ifdef _DEBUG
+bool TestStringUtils() {
+	if (isFloat(".") || isFloat("-.") || !isFloat("0") || !isFloat("-1.0e+3") || !isFloat("6.02e23"))
+		return false;
+	char st1[16] = "abcdef", st2[8] = "aaa";
+	strmtrimright2(st1, "");
+	if (strcmp(st1, "abcdef")) return false;
+	strmtrimright2(st1, "aabcdef");
+	if (strcmp(st1, "abcdef")) return false;
+	strmtrimright2(st2 + 1, "a");
+	if (strcmp(st2, "a")) return false;
+	if (strcmp(strskip("moo", "M", false), "oo")) return false;
+	if (strskip("noo", "M", false)) return false;
+	const char *more = ParseUntilString("some text", " ", st1, 3);
+	if (strcmp(more, "text") || strcmp(st1, "som")) return false;
+
+	char dir[10];
+	const char *base = SplitPathname("/foo/bar/baz", dir, 10);
+	if (strcmp(dir, "/foo/bar") || strcmp(base, "baz"))
+		return false;
+
+	if (CollapseWhitespace("a\n\nb\n\t\t\tc\233\n") != "a b c\233 ")
+		return false;
+
+	string s = "aBc";
+	strupr(s);
+	if (s != "ABC")
+		return false;
+
+	string result;
+	sprintf_safe(result, "%%%s%c %d %ld %l %", "str", '.', INT_MIN, INT_MIN);
+	if (result != "%str. -2147483648 -2147483648 %l %")
+		return false;
+	sprintf_safe(result, "%f %lf %f %lf", -0.001, -0.001, 3.14159, 1.0e+123);
+	if (result != "-1.e-003 -1.e-003 3.14159 1.e+123")
+		return false;
+
+	char buff[16] = "";
+	if (strcmp(ParseUntilEitherString("abcde", "bad", "bc", buff, 15), "de"))
+		return false;
+	if (strcmp(ParseUntilAnyString("abcde", "z", "bad", "bc", buff, 15), "de"))
+		return false;
+	return true;
+}
+#endif

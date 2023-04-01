@@ -1,0 +1,413 @@
+#ifndef _STRING_UTILS_H
+#define _STRING_UTILS_H
+
+#include <stdarg.h>
+#include <string.h>
+#include <ctype.h>
+#include <string>
+#include <vector>
+using namespace std;
+
+#ifndef WIN32
+	#include "LinuxImpl.h"
+	#define __int64 int64_t
+#else
+	typedef unsigned __int64 DWORD64;
+#endif
+
+#define DS_CONFIG_CHANGE_NAME "config-change"
+#define DS_ASSET_CHANGE_NAME "asset-change"
+#define DS_VULN_CHANGE_NAME "vuln-change"
+#define INIT_VAR(t) { t[0]='-';  t[1]='\0'; }
+#define DOMAINCNTRLR_LEN 64
+#ifndef PATH_MAX
+const size_t PATH_MAX = 1024;
+#endif
+#if !defined(SOLARIS) && !defined(AIX)
+const size_t UID_MAX = 64; //max length of a uid or dhuid
+#endif
+const size_t USERNAME_MAX = 64;
+
+struct Pair { char * buffer; size_t size; };
+struct NamedPair { const char * name; char * buffer; size_t size; };
+
+const char * ParseCSV(const char * str, char * dest, size_t max);
+const char * ParseOLFField(const char * str, char * dest, size_t max);
+const char * ParseOLFField(const char * str, string &dest);
+
+
+char * newstr(const char *orig); //make a heap-allocated copy of a string
+
+void strcpy_safe(char *dest, const char *src, size_t limit);
+void strcat_safe(char *dest, const char *src, size_t limit);
+size_t sprintf_safe(char *dest, size_t limit, const char *format, ...);
+void sprintf_safe(string &str,const char *format,...);
+void sappendf(string &str,const char *format,...);
+string format(const char *format,...);
+size_t vfsprintf_safe(char *dest, size_t limit, const char *format, va_list args);
+
+/* fast helper functions */
+void splitv(const char * dest, ...);
+void split2 (char * src, char tk, char *token);
+
+char *strrstr(const char *src, const char *token, bool bCaseSensitive = true);
+
+void right(const char * src, char tk, char * dest, int dstLen);
+void left(const char * src, char tk, char * dest, int dstLen);
+
+void strtrimright(char * src, char trim = ' ');
+void trimrightuptocharacter(char * src, char trim);
+void strmtrimright(char * src, const char *trim = " \t\n");
+void strmtrimright2(char * src, const char *trim, bool bOnce = false);
+void strmtrimright2(string &src, const char *trim, bool bOnce=false);
+void strtrimright(string &src, char trim = ' ');
+void strtrimleft(char * src, char trim = ' ');
+void strmtrimleft(char * src, const char *trim = " \t\n");
+
+void TrimRight(string &s, char *chs);
+void TrimLeft(string &s, char *chs);
+
+void strreplace(const char * src, char * dest, int dstLen, const char * token, const char * reptoken);
+
+//Replace all occurrences of FROM with TO.
+//This version modifies STR in place, so TO must not be longer than FROM.
+void ReplaceString(char *str, const char *from, const char *to);
+//Replace all occurrences of FROM with TO.
+//The result is written to DEST, and will be truncated to SIZE characters.
+//TO may be longer than FROM.
+void ReplaceString(const char *src, char *dest, size_t size, const char *from, const char *to);
+
+int strcountchr(const char * str, char c);
+const char * ParseInteger(const char * str, char * dest, size_t max, int * idest);
+const char * ParseInteger64(const char * str, char * dest, size_t max, DWORD64 * idest);
+const char * ParseToken(const char * str, char * dest, size_t max);
+const char * ParseToken(const char * str, string &dest);
+
+const char * ParseUntil(const char * str, char delimiter, char * dest, size_t max, bool bTrimLeadingSpaces = false);
+const char * ParseUntilEither(const char * str, char delimiter1, char delimiter2,
+							  char * dest, size_t max);
+const char * ParseUntilEither(const char * str, char delimiter1, char delimiter2,
+							  string &dest);
+const char * ParseUntilAny(const char * str, char d1, char d2, char d3,
+						   char * dest, size_t max);
+const char * ParseUntilString(const char * str, const char * delimiter,
+							  char * dest, size_t max, bool isCaseSensitive = true);
+const char * ParseUntilString(const char * str, const char * delimiter,
+							  string &dest, bool isCaseSensitive = true);
+const char * ParseUntilStringRightTrimmed(const char * src, const char * delimiter,
+								char * dest, size_t max, bool isCaseSensitive = true);
+const char * ParseUntilEitherString(const char * str,const char * delimiter1,
+									const char * delimiter2,char * dest,size_t max);
+const char * ParseUntilEitherString(const char * str,const char * delimiter1,const char * delimiter2,
+									string &dest);
+const char * ParseUntilAnyString(const char *str, const char *delimiter1, const char *delimiter2,
+								 const char *delimiter3, char * dest, size_t max);
+const char * ParseUntilSkipString(const char * str, char delimiter, 
+								  const char * startChars, const char * endChars, int n,
+								  char * dest, size_t max);
+const char * ParseUntilExceptLastToken(const char * str, char delimiter, char * dest, size_t max,
+									   char * lastdest, size_t lastmax, const char ** terminators = 0);
+const char * ParseUntilWithEscape(const char * str, char delimiter, string & result);
+const char* ParseSimPrefix(const char * mesg, char * simip, int simiplen, long * simdate);
+
+static void LookUpName(const char * name, NamedPair * pairs, char * & dest, size_t & size);
+
+// parse any named-pairs
+static const char * ParseNamedPairs(const char * str, NamedPair * names[27], bool whitespaceInNames = false,
+					bool whitespaceInValues = false,const char ** nonValueTokens = 0, char valueTerminator = 0);
+
+// parse ONLY LEA firewall specific named-pairs
+static const char * ParseLEANamedPairs(const char * str, NamedPair * names[27],
+					bool whitespaceInNames = false, bool whitespaceInValues = false);
+
+const char * strskip(const char * str, const char * skip,bool isCaseSensitive = true);
+void pathFormatter(char *path);
+void charReplace(char *strline, char token, char reptoken);
+void RemoveExtraChars(char *strline, char extraToken=' ');
+string CollapseWhitespace(const char *in);
+
+const char * SplitPathname(const char * path, char * dirname, size_t limit);
+
+#if defined(WIN32) || defined(AIX) || defined(SOLARIS)
+const char *basename(const char *path);
+#endif
+
+void append_string(string &str, const char * addition);
+void append_string(string &str, const char * addition, size_t len);
+void strlwr(string &str);//used for convert capital to lower
+void strupr(string &str);//used for convert lower to capital
+bool replacestr(std::string &s, const char *sub, const char *other, bool bonce= false);
+bool stdtrim(string &s, const char *find);
+int tokenize (const std::string str, const std::string delimiter, vector<std::string> &vTokens );
+
+/*fast replace function- walks the string only once and returns true if at least one occurence found
+ otherwise returns false*/
+//src    -- Source Buffer..
+//sLen   -- Source Buffer Size...(Not length of the String..)
+//token  -- Token to be Replaced..
+//reptoken -- token with which replace..
+//dest  -- Destination Buffer in which value should Stored, if this NULL src will be taken as Destination..
+//dLen   -- Destination Buffer length.. if Destination Buffer is specified this is Mandatory...
+bool replaceToken(char * src, int sLen, const char * token, const char *reptoken, char * dest = NULL, size_t dLen = 0);
+
+bool isNumeric(const char* str);
+bool isFloat(const char* str);
+char from_hex(char ch);
+
+const char *shortid(const char *valueid);
+
+char *UrlEncode(const char *str);
+char *UrlDecode(const char *str);
+#define APPENDSTREXVAR(buff, name, value, len) \
+	if (value[0] && !(value[0] == '-' && value[1] == '\0'))	{	\
+	AppendStrEx(buff, name, len, '=');	\
+	AppendStrEx(buff, value, len);	\
+	}
+
+#define APPENDSTRVAR(buff, name, value)	\
+		if (value[0] && !(value[0] == '-' && value[1] == '\0'))	{	\
+			AppendStr(buff, name, '=');	\
+			AppendStr(buff,value);	\
+		}
+
+#define APPENDINTVAR(buff, name, value)	\
+		{	\
+			AppendStr(buff, name, '=');	\
+			AppendInt(buff,value);	\
+		}
+
+#define APPENDFLOATVAR(buff, name, value)	\
+		{	\
+			AppendStr(buff, name, '=');	\
+			AppendFloat(buff,value);	\
+		}
+
+inline void AppendStr(char ** str, const char * var, char sep= '\t')
+{
+	char * s1 = *str;
+	const char * s2 = var;
+	while(s2 && *s2) {
+		*s1++ = *s2++;
+	}
+	//if (sep)
+	*s1++ = sep;
+	*str = s1;
+}
+
+//This method append a string specified in "var" to "str".
+//At end it inserts '\0' char to specify end of string.
+//unlike AppendStrEx, this will position "str" at the last inserted char(i.e. '\0')
+//so that, from next time onwards, insertion of data can start from '\0'
+//without any breaks.
+inline int AppendStrEx2(char ** str, const char * var, int maxlen)
+{
+	if(maxlen <= 0) return 0;
+	char * s1 = *str;
+	const char * s2 = var;
+	int len = 0;
+	while(*s2 && (++len < maxlen)) {
+		*s1++ = *s2++;
+	}
+
+	*s1 = '\0';
+	*str = s1;
+	return len;
+}
+
+inline int AppendStrEx(char ** str, const char * var, int maxlen ,char sep= '\t')
+{
+	if(maxlen <= 0) return 0;
+	char * s1 = *str;
+	const char * s2 = var;
+	int len = 0;
+	while(*s2 && (++len < maxlen)) {
+		*s1++ = *s2++;
+	}
+	
+	*s1++ = sep;
+	*str = s1;
+	return len;
+}
+
+inline void AppendInt(char ** str, int k, char sep = '\t', bool fmt = false)
+{
+	char * s1 = *str;
+	if (k == -1)
+	{
+		*s1++ = '-';
+		*s1++ = '1';
+		if (sep != '\0')
+			*s1++ = sep;
+		*str = s1;
+		return;
+	}
+	
+	if (k < 0) {
+		*s1++ = '-';
+		k = -k;
+	}
+
+	char is[12];
+	memset(is,0,12);
+	int g=0;
+
+	int origData = k;
+	while(k && g < 12){
+		is[g++] = k%10;
+		k = k/10;
+	}
+
+	if (origData < 10 && fmt) {
+		*s1++ = '0';
+	}
+	if (g==0) {
+		*s1++ = '0';
+	} else {
+		g--;
+		while(g >= 0) {
+			*s1++ = is[g--] + '0';
+		}
+	}
+	if (sep != '\0')
+		*s1++ = sep;
+	*str = s1;
+}
+//To Enclose multi-word strings in double quotes. Ex : os = "Windows server"
+inline void AppendStringinDoublequotes(char **buff,const char * name,const char * value ,int len) {
+	if (value[0] && !(value[0] == '-' && value[1] == '\0'))
+	{	
+		AppendStrEx(buff, name, len, '=');	
+		const char * s2 = "\"";
+		**buff=*s2;
+		*buff=*buff+1; 
+		AppendStrEx(buff, value, len, '\"'); 
+		AppendStrEx(buff, "", len); 
+	}
+}
+inline void AppendInt64(char ** str, __int64 k, char sep = '\t', bool fmt = false)
+{
+	char * s1 = *str;
+	if (k == -1)
+	{
+		*s1++ = '-';
+		*s1++ = '1';
+		*s1++ = sep;
+		*str = s1;
+		return;
+	}
+
+	if (k < 0) {
+		*s1++ = '-';
+		k = -k;
+	}
+
+	char is[32];
+	memset(is,0,32);
+	int g=0;
+
+	__int64 origData = k;
+	while(k && g < 32){
+		is[g++] = k%10;
+		k = k/10;
+	}
+
+	if (origData < 10 && fmt) {
+		*s1++ = '0';
+	}
+	if (g==0) {
+		*s1++ = '0';
+	} else {
+		g--;
+		while(g >= 0) {
+			*s1++ = is[g--] + '0';
+		}
+	}
+	if (sep != '\0')
+		*s1++ = sep;
+	*str = s1;
+}
+
+inline void AppendUInt(char ** str, unsigned int k, char sep = '\t')
+{
+	char * s1 = *str;
+
+	char is[12];
+	memset(is,0,12);
+	int g=0;
+
+	while(k && g < 12){
+		is[g++] = k%10;
+		k = k/10;
+	}
+
+	if (g==0) {
+		*s1++ = '0';
+	} else {
+		g--;
+		while(g >= 0) {
+			*s1++ = is[g--] + '0';
+		}
+	}
+	if (sep != '\0')
+		*s1++ = sep;
+	*str = s1;
+}
+
+inline void AppendFloat(char ** str, float ff, char sep= '\t')
+{
+	char * s1 = *str;
+	if (ff < 0.0) {
+		*s1++ = '-';
+		ff = - ff;
+	}
+
+	float rounded = ff + 0.0005f;
+	__int64 intpart = (__int64)rounded;
+	AppendInt64(&s1, intpart, '\0');
+	*s1++ = '.';
+
+	__int64 frac = (__int64)((rounded - intpart) * 1000);
+
+	if(frac<100)
+	{
+		*s1++ = '0';
+		if(frac<10)
+			*s1++ = '0';
+	}
+
+	AppendInt64(&s1, frac, sep);
+	*str = s1;
+}
+
+inline void AppendDouble(char ** str, double ff, char sep= '\t')
+{
+	char * s1 = *str;
+	if (ff < 0.0) {
+		*s1++ = '-';
+		ff = - ff;
+	}
+
+	double rounded = ff + 0.0005f;
+	__int64 intpart = (__int64)rounded;
+	AppendInt64(&s1, intpart, '\0');
+	*s1++ = '.';
+
+	__int64 frac =(__int64)((double)(rounded - intpart) * 1000);
+
+	if(frac<100)
+	{
+		*s1++ = '0';
+		if(frac<10)
+			*s1++ = '0';
+	}
+	
+	AppendInt64(&s1, frac, sep);
+	*str = s1;
+}
+#ifndef WIN32
+void strlwr(char *str);//used for convert capital to lower
+char* itoa(int val, char *buf, int radix);
+bool setUidOfUser(char* username,char* groupname);
+bool ReadConfig(char* appPath,char *name,char *value);
+#endif
+#endif
